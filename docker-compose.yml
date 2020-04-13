@@ -1,0 +1,18 @@
+version: '3'
+services:
+  elasticsearch:
+    image: elasticsearch:7.6.1
+    ports:
+      - 9200:9200
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=password
+  api:
+    build: .
+    ports:
+      - 8000:8000
+    restart: unless-stopped
+    environment:
+      - PORT=8000
+      - GIN_MODE=debug
