@@ -7,6 +7,7 @@ import (
     "github.com/gin-gonic/gin"
     "io"
     "net/http"
+    "reflect"
     "strings"
 )
 
@@ -17,8 +18,50 @@ type ItemsController struct {
 
 // Item ...
 type Item struct {
-    ID     string `json:"id"`
-    Source string `json:"source"`
+    ID          string             `json:"id"`
+    Score       float64            `json:"score"`
+    Source      string             `json:"source"`
+    Timestamp   uint64             `json:"timestamp"`
+    Name        string             `json:"name"`
+    Description string             `json:"description"`
+    Urls        []string           `json:"urls"`
+    Categories  []string           `json:"categories"`
+    ImageUrls   []string           `json:"image_urls"`
+    Dimensions  map[string]float64 `json:"dimensions"`
+    Price       price
+}
+
+type price struct {
+    Amount   float64 `json:"amount"`
+    Currency string  `json:"currency"`
+}
+
+// ESItem ...
+type ESItem struct {
+    Source     string             `json:"source"`
+    Timestamp  uint64             `json:"timestamp"`
+    ImageUrls  []string           `json:"image_urls"`
+    Dimensions map[string]float64 `json:"dimensions"`
+    Name       struct {
+        EN string `json:"en"`
+        FR string `json:"fr"`
+    }
+    Description struct {
+        EN string `json:"en"`
+        FR string `json:"fr"`
+    }
+    Urls struct {
+        EN []string `json:"en"`
+        FR []string `json:"fr"`
+    }
+    Categories struct {
+        EN []string `json:"en"`
+        FR []string `json:"fr"`
+    }
+    Price struct {
+        EN price `json:"en"`
+        FR price `json:"fr"`
+    }
 }
 
 // ItemsSearchResults ...
@@ -103,20 +146,35 @@ func (ctrl *ItemsController) search(es *elasticsearch.Client, p *itemsSearchPara
         return &results, err
     }
 
+    results.Total = r.Hits.Total.Value
+
     if len(r.Hits.Hits) < 1 {
         results.Items = []*Item{}
         return &results, nil
     }
 
     for _, hit := range r.Hits.Hits {
-        var h Item
-        h.ID = hit.ID
+        i := Item{
+            ID:    hit.ID,
+            Score: hit.Score,
+        }
 
-        if err := json.Unmarshal(hit.Source, &h); err != nil {
+        var esi ESItem
+        if err := json.Unmarshal(hit.Source, &esi); err != nil {
             return &results, err
         }
 
-        results.Items = append(results.Items, &h)
+        i.Source = esi.Source
+        i.Timestamp = esi.Timestamp
+        i.ImageUrls = esi.ImageUrls
+        i.Dimensions = esi.Dimensions
+        i.Name = reflect.ValueOf(esi.Name).FieldByName(strings.ToUpper(p.Lang)).String()
+        i.Description = reflect.ValueOf(esi.Description).FieldByName(strings.ToUpper(p.Lang)).String()
+        i.Urls = reflect.ValueOf(esi.Urls).FieldByName(strings.ToUpper(p.Lang)).Interface().([]string)
+        i.Categories = reflect.ValueOf(esi.Categories).FieldByName(strings.ToUpper(p.Lang)).Interface().([]string)
+        i.Price = reflect.ValueOf(esi.Price).FieldByName(strings.ToUpper(p.Lang)).Interface().(price)
+
+        results.Items = append(results.Items, &i)
     }
 
     return &results, nil
@@ -125,27 +183,99 @@ func (ctrl *ItemsController) search(es *elasticsearch.Client, p *itemsSearchPara
 func (ctrl *ItemsController) buildSearchQuery(p *itemsSearchParams) io.Reader {
     var b strings.Builder
 
+    filters := ctrl.buildDimensionsFilter(p)
+
     b.WriteString("{")
-    b.WriteString(fmt.Sprintf(searchMatch, p.Query, p.Lang, p.Lang))
+    b.WriteString(fmt.Sprintf(searchMatch, p.Query, p.Lang, p.Lang, filters))
 
     if len(p.After) > 0 {
         b.WriteString(",\n")
-        b.WriteString(fmt.Sprintf(` "search_after": %s`, p.After))
+        b.WriteString(fmt.Sprintf(`    "search_after": [%s]`, p.After))
     }
 
     b.WriteString("\n}")
 
-    fmt.Printf("%s\n", b.String())
+    //fmt.Printf("%s\n", b.String())
     return strings.NewReader(b.String())
+}
+
+func (ctrl *ItemsController) buildDimensionsFilter(p *itemsSearchParams) string {
+    var b strings.Builder
+
+    if p.MinLength != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "length", "gte", p.MinLength))
+    }
+    if p.MaxLength != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "length", "lte", p.MaxLength))
+    }
+    if p.MinHeight != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "height", "gte", p.MinHeight))
+    }
+    if p.MaxHeight != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "height", "lte", p.MaxHeight))
+    }
+    if p.MinWidth != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "width", "gte", p.MinWidth))
+    }
+    if p.MaxWidth != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "width", "lte", p.MaxWidth))
+    }
+    if p.MinDepth != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "depth", "gte", p.MinDepth))
+    }
+    if p.MaxDepth != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "depth", "lte", p.MaxDepth))
+    }
+    if p.MinWeight != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "weight", "gte", p.MinWeight))
+    }
+    if p.MaxWeight != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "weight", "lte", p.MaxWeight))
+    }
+    if p.MinDiameter != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "diameter", "gte", p.MinDiameter))
+    }
+    if p.MaxDiameter != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "diameter", "lte", p.MaxDiameter))
+    }
+    if p.MinVolume != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "volume", "gte", p.MinVolume))
+    }
+    if p.MaxVolume != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "volume", "lte", p.MaxVolume))
+    }
+    if p.MinThickness != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "thickness", "gte", p.MinThickness))
+    }
+    if p.MaxThickness != 0 {
+        b.WriteString(fmt.Sprintf(dimensionsFilter, "thickness", "lte", p.MaxThickness))
+    }
+
+    s := b.String()
+    if len(s) > 0 {
+        s = s[:len(s)-2] // Remove trailing comma and newline characters
+    }
+
+    return s
 }
 
 const searchMatch = `
     "query" : {
-        "multi_match" : {
-            "query" : %q,
-            "fields" : ["name.%s^10", "description.%s"],
-            "operator" : "and"
+        "bool": {
+            "must": [{
+                "multi_match" : {
+                    "query" : %q,
+                    "fields" : ["name.%s^10", "description.%s"],
+                    "operator" : "and"
+                }
+            }],
+            "filter": [
+%s
+            ]
         }
     },
     "size" : 25,
-    "sort" : [ { "_score" : "desc" }, { "_doc" : "asc" } ]`
+    "sort" : [ { "_score" : "desc" }, { "timestamp" : "asc" } ]`
+
+const dimensionsFilter = `                { "range":  { "dimensions.%s": {"%s": %f} }},
+`
