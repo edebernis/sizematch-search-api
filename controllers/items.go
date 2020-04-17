@@ -28,7 +28,7 @@ type Item struct {
     Categories  []string           `json:"categories"`
     ImageUrls   []string           `json:"image_urls"`
     Dimensions  map[string]float64 `json:"dimensions"`
-    Price       price
+    Price       price              `json:"price"`
 }
 
 type price struct {
