@@ -16,3 +16,7 @@ services:
     environment:
       - PORT=8000
       - GIN_MODE=debug
+      - ELASTICSEARCH_URLS=http://localhost:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=password
+      - ITEMS_INDEX=sizematch-items
