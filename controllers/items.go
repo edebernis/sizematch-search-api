@@ -18,17 +18,17 @@ type ItemsController struct {
 
 // Item ...
 type Item struct {
-    ID          string             `json:"id"`
-    Score       float64            `json:"score"`
-    Source      string             `json:"source"`
-    Timestamp   uint64             `json:"timestamp"`
-    Name        string             `json:"name"`
-    Description string             `json:"description"`
-    Urls        []string           `json:"urls"`
-    Categories  []string           `json:"categories"`
-    ImageUrls   []string           `json:"image_urls"`
-    Dimensions  map[string]float64 `json:"dimensions"`
-    Price       price              `json:"price"`
+    ID          string                      `json:"id"`
+    Score       float64                     `json:"score"`
+    Source      string                      `json:"source"`
+    Timestamp   uint64                      `json:"timestamp"`
+    Name        string                      `json:"name"`
+    Description string                      `json:"description"`
+    Urls        []string                    `json:"urls"`
+    Categories  []string                    `json:"categories"`
+    ImageUrls   []string                    `json:"image_urls"`
+    Dimensions  map[esItemDimension]float64 `json:"dimensions"`
+    Price       price                       `json:"price"`
 }
 
 type price struct {
@@ -38,10 +38,10 @@ type price struct {
 
 // ESItem ...
 type ESItem struct {
-    Source     string             `json:"source"`
-    Timestamp  uint64             `json:"timestamp"`
-    ImageUrls  []string           `json:"image_urls"`
-    Dimensions map[string]float64 `json:"dimensions"`
+    Source     string                      `json:"source"`
+    Timestamp  uint64                      `json:"timestamp"`
+    ImageUrls  []string                    `json:"image_urls"`
+    Dimensions map[esItemDimension]float64 `json:"dimensions"`
     Name       struct {
         EN string `json:"en"`
         FR string `json:"fr"`
@@ -63,6 +63,19 @@ type ESItem struct {
         FR price `json:"fr"`
     }
 }
+
+type esItemDimension string
+
+const (
+    esLength    esItemDimension = "length"
+    esHeight    esItemDimension = "height"
+    esWidth     esItemDimension = "width"
+    esDepth     esItemDimension = "depth"
+    esWeight    esItemDimension = "weight"
+    esDiameter  esItemDimension = "diameter"
+    esVolume    esItemDimension = "volume"
+    esThickness esItemDimension = "thickness"
+)
 
 // ItemsSearchResults ...
 type ItemsSearchResults struct {
@@ -90,6 +103,30 @@ type itemsSearchParams struct {
     MaxThickness float64 `form:"max_thickness"`
     MinVolume    float64 `form:"min_volume"`
     MaxVolume    float64 `form:"max_volume"`
+}
+
+type esDimensionFilter struct {
+    dimension esItemDimension
+    filter    string
+}
+
+var itemsSearchParamsDimensionFiltersMap = map[string]esDimensionFilter{
+    "MinLength":    {dimension: esLength, filter: "gte"},
+    "MaxLength":    {dimension: esLength, filter: "lte"},
+    "MinHeight":    {dimension: esHeight, filter: "gte"},
+    "MaxHeight":    {dimension: esHeight, filter: "lte"},
+    "MinWidth":     {dimension: esWidth, filter: "gte"},
+    "MaxWidth":     {dimension: esWidth, filter: "lte"},
+    "MinDepth":     {dimension: esDepth, filter: "gte"},
+    "MaxDepth":     {dimension: esDepth, filter: "lte"},
+    "MinWeight":    {dimension: esWeight, filter: "gte"},
+    "MaxWeight":    {dimension: esWeight, filter: "lte"},
+    "MinDiameter":  {dimension: esDiameter, filter: "gte"},
+    "MaxDiameter":  {dimension: esDiameter, filter: "lte"},
+    "MinVolume":    {dimension: esVolume, filter: "gte"},
+    "MaxVolume":    {dimension: esVolume, filter: "lte"},
+    "MinThickness": {dimension: esThickness, filter: "gte"},
+    "MaxThickness": {dimension: esThickness, filter: "lte"},
 }
 
 // RoutesV1 setups V1 items routes
@@ -168,16 +205,20 @@ func (ctrl *ItemsController) search(es *elasticsearch.Client, p *itemsSearchPara
         i.Timestamp = esi.Timestamp
         i.ImageUrls = esi.ImageUrls
         i.Dimensions = esi.Dimensions
-        i.Name = reflect.ValueOf(esi.Name).FieldByName(strings.ToUpper(p.Lang)).String()
-        i.Description = reflect.ValueOf(esi.Description).FieldByName(strings.ToUpper(p.Lang)).String()
-        i.Urls = reflect.ValueOf(esi.Urls).FieldByName(strings.ToUpper(p.Lang)).Interface().([]string)
-        i.Categories = reflect.ValueOf(esi.Categories).FieldByName(strings.ToUpper(p.Lang)).Interface().([]string)
-        i.Price = reflect.ValueOf(esi.Price).FieldByName(strings.ToUpper(p.Lang)).Interface().(price)
+        i.Name = ctrl.getESItemValueByLang(esi.Name, p.Lang).String()
+        i.Description = ctrl.getESItemValueByLang(esi.Description, p.Lang).String()
+        i.Urls = ctrl.getESItemValueByLang(esi.Urls, p.Lang).Interface().([]string)
+        i.Categories = ctrl.getESItemValueByLang(esi.Categories, p.Lang).Interface().([]string)
+        i.Price = ctrl.getESItemValueByLang(esi.Price, p.Lang).Interface().(price)
 
         results.Items = append(results.Items, &i)
     }
 
     return &results, nil
+}
+
+func (ctrl *ItemsController) getESItemValueByLang(i interface{}, lang string) reflect.Value {
+    return reflect.ValueOf(i).FieldByName(strings.ToUpper(lang))
 }
 
 func (ctrl *ItemsController) buildSearchQuery(p *itemsSearchParams) io.Reader {
@@ -186,7 +227,7 @@ func (ctrl *ItemsController) buildSearchQuery(p *itemsSearchParams) io.Reader {
     filters := ctrl.buildDimensionsFilter(p)
 
     b.WriteString("{")
-    b.WriteString(fmt.Sprintf(searchMatch, p.Query, p.Lang, p.Lang, filters))
+    b.WriteString(fmt.Sprintf(esQuery, p.Query, p.Lang, p.Lang, p.Lang, filters, p.Lang))
 
     if len(p.After) > 0 {
         b.WriteString(",\n")
@@ -202,53 +243,12 @@ func (ctrl *ItemsController) buildSearchQuery(p *itemsSearchParams) io.Reader {
 func (ctrl *ItemsController) buildDimensionsFilter(p *itemsSearchParams) string {
     var b strings.Builder
 
-    if p.MinLength != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "length", "gte", p.MinLength))
-    }
-    if p.MaxLength != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "length", "lte", p.MaxLength))
-    }
-    if p.MinHeight != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "height", "gte", p.MinHeight))
-    }
-    if p.MaxHeight != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "height", "lte", p.MaxHeight))
-    }
-    if p.MinWidth != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "width", "gte", p.MinWidth))
-    }
-    if p.MaxWidth != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "width", "lte", p.MaxWidth))
-    }
-    if p.MinDepth != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "depth", "gte", p.MinDepth))
-    }
-    if p.MaxDepth != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "depth", "lte", p.MaxDepth))
-    }
-    if p.MinWeight != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "weight", "gte", p.MinWeight))
-    }
-    if p.MaxWeight != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "weight", "lte", p.MaxWeight))
-    }
-    if p.MinDiameter != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "diameter", "gte", p.MinDiameter))
-    }
-    if p.MaxDiameter != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "diameter", "lte", p.MaxDiameter))
-    }
-    if p.MinVolume != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "volume", "gte", p.MinVolume))
-    }
-    if p.MaxVolume != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "volume", "lte", p.MaxVolume))
-    }
-    if p.MinThickness != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "thickness", "gte", p.MinThickness))
-    }
-    if p.MaxThickness != 0 {
-        b.WriteString(fmt.Sprintf(dimensionsFilter, "thickness", "lte", p.MaxThickness))
+    for _, searchParamName := range reflect.ValueOf(itemsSearchParamsDimensionFiltersMap).MapKeys() {
+        searchParamValue := reflect.ValueOf(p).FieldByName(searchParamName.String()).Float()
+        if searchParamValue != 0 {
+            obj := itemsSearchParamsDimensionFiltersMap[searchParamName.String()]
+            b.WriteString(fmt.Sprintf(esQueryFilter, obj.dimension, obj.filter, searchParamValue))
+        }
     }
 
     s := b.String()
@@ -259,13 +259,13 @@ func (ctrl *ItemsController) buildDimensionsFilter(p *itemsSearchParams) string 
     return s
 }
 
-const searchMatch = `
+const esQuery = `
     "query" : {
         "bool": {
             "must": [{
                 "multi_match" : {
                     "query" : %q,
-                    "fields" : ["name.%s^10", "description.%s"],
+                    "fields" : ["name.%s^10", "categories.%s^3", "description.%s"],
                     "operator" : "and"
                 }
             }],
@@ -277,5 +277,5 @@ const searchMatch = `
     "size" : 25,
     "sort" : [ { "_score" : "desc" }, { "timestamp" : "asc" } ]`
 
-const dimensionsFilter = `                { "range":  { "dimensions.%s": {"%s": %f} }},
+const esQueryFilter = `                { "range":  { "dimensions.%s": {"%s": %f} }},
 `
