@@ -227,7 +227,7 @@ func (ctrl *ItemsController) buildSearchQuery(p *itemsSearchParams) io.Reader {
     filters := ctrl.buildDimensionsFilter(p)
 
     b.WriteString("{")
-    b.WriteString(fmt.Sprintf(esQuery, p.Query, p.Lang, p.Lang, p.Lang, filters, p.Lang))
+    b.WriteString(fmt.Sprintf(esQuery, p.Query, p.Lang, p.Lang, p.Lang, filters))
 
     if len(p.After) > 0 {
         b.WriteString(",\n")
