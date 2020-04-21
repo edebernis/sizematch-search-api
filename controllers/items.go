@@ -244,7 +244,7 @@ func (ctrl *ItemsController) buildDimensionsFilter(p *itemsSearchParams) string 
     var b strings.Builder
 
     for _, searchParamName := range reflect.ValueOf(itemsSearchParamsDimensionFiltersMap).MapKeys() {
-        searchParamValue := reflect.ValueOf(p).FieldByName(searchParamName.String()).Float()
+        searchParamValue := reflect.Indirect(reflect.ValueOf(p)).FieldByName(searchParamName.String()).Float()
         if searchParamValue != 0 {
             obj := itemsSearchParamsDimensionFiltersMap[searchParamName.String()]
             b.WriteString(fmt.Sprintf(esQueryFilter, obj.dimension, obj.filter, searchParamValue))
